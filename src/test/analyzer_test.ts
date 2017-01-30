@@ -180,11 +180,19 @@ suite('Analyzer', () => {
         });
         const analyzer = new BuildAnalyzer(config);
 
+        let errorCounter = 0;
+        const errorListener = (err: Error) => {
+          assert.equal(err.message, '1 error(s) occurred during build.');
+          errorCounter++;
+          if (errorCounter >= 2) {
+            done();
+          }
+        };
+
+        analyzer.sources().pipe(new NoopStream());
+        analyzer.sources().on('error', errorListener);
         analyzer.dependencies().pipe(new NoopStream());
-        analyzer.dependencies().on('error', (err: Error) => {
-          assert.match(err.message, /1 error\(s\) occurred during build/);
-          done();
-        });
+        analyzer.dependencies().on('error', errorListener);
       });
 
   test(
