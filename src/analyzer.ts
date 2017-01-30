@@ -283,27 +283,14 @@ export class BuildAnalyzer {
     // this would cause the analyzer to hang.
     for (const filePath of this.loader.deferredFiles.keys()) {
       if (this.config.isSource(filePath)) {
-        this.emitNotFoundError(filePath);
+        const err = new Error(`Not found: ${filePath}`);
+        this.loader.rejectDeferredFile(filePath, err);
         return;
       }
     }
 
     // Set sourceFilesLoaded so that future files aren't accidentally deferred
     this.sourceFilesLoaded = true;
-  }
-
-
-  /**
-   * Helper function for emitting a "Not Found" error onto the correct
-   * file stream.
-   */
-  private emitNotFoundError(filePath: string) {
-    const err = new Error(`Not found: ${filePath}`);
-    if (this.config.isSource(filePath)) {
-      this._sourcesProcessingStream.emit('error', err);
-    } else {
-      this._dependenciesProcessingStream.emit('error', err);
-    }
   }
 
   /**
@@ -332,13 +319,12 @@ export class BuildAnalyzer {
       return;
     }
 
-    // If stream finished with files that still needed to be loaded, propagate
-    // an error in each build stream.
-    if (this.loader.hasDeferredFiles()) {
-      for (const filePath of this.loader.deferredFiles.keys()) {
-        this.emitNotFoundError(filePath);
-        return;
-      }
+    // If analysis somehow finished with files that still needed to be loaded,
+    // propagate an error in each build stream.
+    for (const filePath of this.loader.deferredFiles.keys()) {
+      const err = new Error(`Not found: ${filePath}`);
+      this.loader.rejectDeferredFile(filePath, err);
+      return;
     }
 
     // Resolve our dependency analysis promise now that we have seen all files
@@ -496,7 +482,11 @@ export interface BackwardsCompatibleUrlLoader extends UrlLoader,
                                                       HydrolysisResolver {}
 ;
 
-export type DeferredFileCallback = (a: string) => string;
+export type ResolveFileCallback = (a: string) => void;
+export type RejectFileCallback = (err: Error) => void;
+export type DeferredFileCallbacks = {
+  resolve: ResolveFileCallback; reject: RejectFileCallback;
+};
 
 export class StreamLoader implements BackwardsCompatibleUrlLoader {
   config: ProjectConfig;
@@ -505,7 +495,7 @@ export class StreamLoader implements BackwardsCompatibleUrlLoader {
   // Store files that have not yet entered the Analyzer stream here.
   // Later, when the file is seen, the DeferredFileCallback can be
   // called with the file contents to resolve its loading.
-  deferredFiles = new Map<string, DeferredFileCallback>();
+  deferredFiles = new Map<string, DeferredFileCallbacks>();
 
   constructor(analyzer: BuildAnalyzer) {
     this.analyzer = analyzer;
@@ -521,8 +511,14 @@ export class StreamLoader implements BackwardsCompatibleUrlLoader {
   }
 
   resolveDeferredFile(filePath: string, file: File): void {
-    const deferred = this.deferredFiles.get(filePath);
-    deferred(file.contents.toString());
+    const deferredCallbacks = this.deferredFiles.get(filePath);
+    deferredCallbacks.resolve(file.contents.toString());
+    this.deferredFiles.delete(filePath);
+  }
+
+  rejectDeferredFile(filePath: string, err: Error): void {
+    const deferredCallbacks = this.deferredFiles.get(filePath);
+    deferredCallbacks.reject(err);
     this.deferredFiles.delete(filePath);
   }
 
@@ -551,8 +547,8 @@ export class StreamLoader implements BackwardsCompatibleUrlLoader {
     }
 
     return new Promise(
-        (resolve: DeferredFileCallback, reject: (err: Error) => void) => {
-          this.deferredFiles.set(filePath, resolve);
+        (resolve: ResolveFileCallback, reject: RejectFileCallback) => {
+          this.deferredFiles.set(filePath, {resolve, reject});
           try {
             if (this.config.isSource(filePath)) {
               this.analyzer.sourcePathAnalyzed(filePath);
@@ -560,7 +556,7 @@ export class StreamLoader implements BackwardsCompatibleUrlLoader {
               this.analyzer.dependencyPathAnalyzed(filePath);
             }
           } catch (err) {
-            reject(err);
+            this.rejectDeferredFile(filePath, err);
           }
         });
   }
