@@ -28,8 +28,6 @@ import {ProjectConfig} from 'polymer-project-config';
 import {VinylReaderTransform} from './streams';
 import {urlFromPath, pathFromUrl} from './path-transformers';
 
-
-const minimatchAll = require('minimatch-all');
 const logger = logging.getLogger('cli.build.analyzer');
 
 export interface DocumentDeps {
@@ -284,8 +282,7 @@ export class BuildAnalyzer {
     // Emit an error if there are missing source files still deferred. Otherwise
     // this would cause the analyzer to hang.
     for (const filePath of this.loader.deferredFiles.keys()) {
-      // TODO(fks) 01-13-2017: Replace with config.isSource() once released
-      if (minimatchAll(filePath, this.config.sources)) {
+      if (this.config.isSource(filePath)) {
         this.emitNotFoundError(filePath);
         return;
       }
@@ -302,7 +299,7 @@ export class BuildAnalyzer {
    */
   private emitNotFoundError(filePath: string) {
     const err = new Error(`Not found: ${filePath}`);
-    if (minimatchAll(filePath, this.config.sources)) {
+    if (this.config.isSource(filePath)) {
       this._sourcesProcessingStream.emit('error', err);
     } else {
       this._dependenciesProcessingStream.emit('error', err);
@@ -557,8 +554,7 @@ export class StreamLoader implements BackwardsCompatibleUrlLoader {
         (resolve: DeferredFileCallback, reject: (err: Error) => void) => {
           this.deferredFiles.set(filePath, resolve);
           try {
-            // TODO(fks) 01-13-2017: Replace with config.isSource()
-            if (minimatchAll(filePath, this.config.sources)) {
+            if (this.config.isSource(filePath)) {
               this.analyzer.sourcePathAnalyzed(filePath);
             } else {
               this.analyzer.dependencyPathAnalyzed(filePath);
